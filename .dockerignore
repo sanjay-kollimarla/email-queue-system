@@ -1,0 +1,13 @@
+**/node_modules
+.env
+.env.*
+.git
+.run
+tests
+docs
+web/dist
+web/test-results
+web/playwright-report
+web/e2e
+web/tests
+*.md

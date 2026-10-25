@@ -1,0 +1,85 @@
+# Infra only (apps run on your host with `bun run ...`):
+#   docker compose up -d mongo redis
+# Whole stack in containers (3 worker replicas + fake SMTP sink):
+#   docker compose --profile app up --build -d
+x-app-env: &app-env
+  MONGO_URL: mongodb://mongo:27017/?replicaSet=rs0
+  MONGO_DB: emailq
+  REDIS_URL: redis://redis:6379
+  JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-please-0123456789}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-2f1c9a7e5b3d8c4a6e0f1b2d3c4a5968778695a4b3c2d1e0f9e8d7c6b5a49382}
+  MESSAGE_ID_DOMAIN: ${MESSAGE_ID_DOMAIN:-emailq.local}
+  ALLOW_PRIVATE_SMTP_HOSTS: ${ALLOW_PRIVATE_SMTP_HOSTS:-true}   # true only so the local sink works; keep false in production
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-200}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3100}
+  DEMO_MODE: ${DEMO_MODE:-true}   # shows the one-click demo account + demo campaign sender in the web app
+  DEMO_SMTP_HOST: sink            # the bundled fake SMTP server (service below)
+
+x-app: &app
+  build: .
+  restart: unless-stopped
+  profiles: ["app"]
+  environment: *app-env
+  depends_on:
+    mongo: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  mongo:
+    image: mongo:7
+    # Transactions (the outbox) need a replica set, even with a single node.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports: ["27017:27017"]
+    volumes: [mongo-data:/data/db]
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 5s
+
+  redis:
+    image: redis:7
+    # AOF so a restart does not lose queued jobs; noeviction because BullMQ must never lose keys under memory pressure.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    ports: ["6379:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app
+    command: ["bun", "run", "src/api/server.ts"]
+    ports: ["${API_PORT:-3100}:3000"]
+
+  relay:
+    <<: *app
+    command: ["bun", "run", "src/workers/outbox-relay.ts"]
+
+  worker:
+    <<: *app
+    command: ["bun", "run", "src/workers/send-worker.ts"]
+    deploy:
+      replicas: 3
+
+  reaper:
+    <<: *app
+    command: ["bun", "run", "src/workers/reaper.ts"]
+
+  sink:
+    <<: *app
+    command: ["bun", "run", "src/loadtest/smtp-sink.ts"]
+    ports: ["2525:2525", "2526:2526"]
+    depends_on: {}
+
+volumes:
+  mongo-data:
+  redis-data:

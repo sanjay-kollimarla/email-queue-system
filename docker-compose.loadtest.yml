@@ -1,0 +1,121 @@
+# Load-test stack with PRODUCTION-STYLE resource limits: every service gets a CPU/RAM maximum (a hard cap) and a
+# minimum (what the scheduler guarantees it). Nothing is published on the usual dev ports, so it can run next to
+# `bun run dev` (API on 3200, fake SMTP server on 2625, its control port on 2626).
+#
+#   bun run lt:up                       # build + start, waits until healthy
+#   bun run loadtest -- --docker --emails 60000 --per-second 1000 --connections 50
+#   bun run lt:down                     # stop and delete its data
+#
+# Change any limit with an environment variable, for example:
+#   set WORKER_CPUS=0.5&& set WORKER_MEM=256m&& set WORKER_REPLICAS=8&& bun run lt:up
+# MAX is the hard cap (CPU is throttled at it, memory above it is an OOM kill). MIN is the reservation.
+# Docker enforces the CPU maximum and both memory values; outside Swarm it does not enforce a CPU minimum, so the *_CPUS_MIN
+# values only document intent (and apply if you deploy this file with Swarm / Kubernetes-style schedulers).
+# Each limit applies PER CONTAINER, so total worker capacity = WORKER_REPLICAS x WORKER_CPUS.
+name: emailq-lt
+
+x-env: &env
+  MONGO_URL: mongodb://mongo:27017/?replicaSet=rs0
+  MONGO_DB: emailq
+  REDIS_URL: redis://redis:6379
+  JWT_SECRET: dev-only-jwt-secret-change-me-please-0123456789
+  ENCRYPTION_KEY: 2f1c9a7e5b3d8c4a6e0f1b2d3c4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+  MESSAGE_ID_DOMAIN: emailq.local
+  ALLOW_PRIVATE_SMTP_HOSTS: "true" # only so the bundled fake SMTP server is reachable; keep false in production
+  AUTH_RATE_LIMIT_SCALE: "100" # the load test registers an account; do not trip the auth rate limit
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-200}
+  LOG_LEVEL: ${LOG_LEVEL:-warn}
+  PUBLIC_BASE_URL: http://localhost:3200
+
+x-app: &app
+  image: emailq-lt-app
+  build: .
+  restart: "no" # a crash or OOM kill should be visible in the report, not silently restarted
+  environment: *env
+  depends_on:
+    mongo: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
+services:
+  mongo:
+    image: mongo:7
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    deploy:
+      resources:
+        limits: { cpus: "${MONGO_CPUS:-2.0}", memory: "${MONGO_MEM:-2g}" }
+        reservations: { cpus: "${MONGO_CPUS_MIN:-1.0}", memory: "${MONGO_MEM_MIN:-1g}" }
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 5s
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
+    deploy:
+      resources:
+        limits: { cpus: "${REDIS_CPUS:-1.0}", memory: "${REDIS_MEM:-512m}" }
+        reservations: { cpus: "${REDIS_CPUS_MIN:-0.25}", memory: "${REDIS_MEM_MIN:-128m}" }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *app
+    command: ["bun", "run", "src/api/server.ts"]
+    ports: ["${API_PORT:-3200}:3000"]
+    deploy:
+      resources:
+        limits: { cpus: "${API_CPUS:-1.0}", memory: "${API_MEM:-512m}" }
+        reservations: { cpus: "${API_CPUS_MIN:-0.25}", memory: "${API_MEM_MIN:-128m}" }
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  relay:
+    <<: *app
+    command: ["bun", "run", "src/workers/outbox-relay.ts"]
+    deploy:
+      resources:
+        limits: { cpus: "${RELAY_CPUS:-0.5}", memory: "${RELAY_MEM:-384m}" }
+        reservations: { cpus: "${RELAY_CPUS_MIN:-0.1}", memory: "${RELAY_MEM_MIN:-128m}" }
+
+  worker:
+    <<: *app
+    command: ["bun", "run", "src/workers/send-worker.ts"]
+    deploy:
+      replicas: ${WORKER_REPLICAS:-4}
+      resources:
+        limits: { cpus: "${WORKER_CPUS:-1.0}", memory: "${WORKER_MEM:-512m}" }
+        reservations: { cpus: "${WORKER_CPUS_MIN:-0.5}", memory: "${WORKER_MEM_MIN:-256m}" }
+
+  reaper:
+    <<: *app
+    command: ["bun", "run", "src/workers/reaper.ts"]
+    deploy:
+      resources:
+        limits: { cpus: "${REAPER_CPUS:-0.25}", memory: "${REAPER_MEM:-256m}" }
+        reservations: { cpus: "${REAPER_CPUS_MIN:-0.05}", memory: "${REAPER_MEM_MIN:-64m}" }
+
+  # the fake SMTP server the load test sends to (its control port lets the test change latency / limits live)
+  sink:
+    <<: *app
+    command: ["bun", "run", "src/loadtest/smtp-sink.ts"]
+    ports: ["${SINK_SMTP_PORT:-2625}:2525", "${SINK_HTTP_PORT:-2626}:2526"]
+    depends_on: {}
+    deploy:
+      resources:
+        limits: { cpus: "${SINK_CPUS:-1.0}", memory: "${SINK_MEM:-256m}" }
+        reservations: { cpus: "${SINK_CPUS_MIN:-0.25}", memory: "${SINK_MEM_MIN:-64m}" }

@@ -1,0 +1,74 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      REDIS_URL: redis://localhost:6379
+      MONGO_URL: mongodb://localhost:27017/?directConnection=true
+      JWT_SECRET: ci-only-jwt-secret-ci-only-jwt-secret-0123
+      ENCRYPTION_KEY: 2f1c9a7e5b3d8c4a6e0f1b2d3c4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+      ALLOW_PRIVATE_SMTP_HOSTS: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Start Redis and a single-node MongoDB replica set (transactions need one)
+        run: |
+          docker run -d --name redis -p 6379:6379 redis:7
+          docker run -d --name mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do docker exec mongo mongosh --quiet --eval "1" >/dev/null 2>&1 && break; sleep 1; done
+          docker exec mongo mongosh --quiet --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]})"
+          for i in $(seq 1 30); do docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true && break; sleep 1; done
+      - run: bun install --frozen-lockfile
+      - run: bun run web:install
+      - name: Server + web - typecheck, lint, format, unit/integration tests, web build
+        run: bun run ci
+      - name: Production image builds (includes the web build stage)
+        run: docker build -t email-queue-system .
+      - name: Production compose file is valid
+        run: |
+          cp .env.prod.example .env.prod
+          docker compose -f docker-compose.prod.yml --env-file .env.prod config -q
+
+  e2e:
+    # drives the whole product through a real browser: API + relay + workers + MongoDB + Redis + fake SMTP + React app
+    runs-on: ubuntu-latest
+    env:
+      REDIS_URL: redis://localhost:6379
+      MONGO_URL: mongodb://localhost:27017/?directConnection=true
+      JWT_SECRET: ci-only-jwt-secret-ci-only-jwt-secret-0123
+      ENCRYPTION_KEY: 2f1c9a7e5b3d8c4a6e0f1b2d3c4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
+      ALLOW_PRIVATE_SMTP_HOSTS: "true"
+      DEMO_MODE: "true"
+      PORT: "3100"
+      AUTH_RATE_LIMIT_SCALE: "100" # the suite registers dozens of users from one IP
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Start Redis and a single-node MongoDB replica set
+        run: |
+          docker run -d --name redis -p 6379:6379 redis:7
+          docker run -d --name mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do docker exec mongo mongosh --quiet --eval "1" >/dev/null 2>&1 && break; sleep 1; done
+          docker exec mongo mongosh --quiet --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]})"
+          for i in $(seq 1 30); do docker exec mongo mongosh --quiet --eval "db.hello().isWritablePrimary" | grep -q true && break; sleep 1; done
+      - run: bun install --frozen-lockfile
+      - run: bun run web:install
+      - run: bun run web:build
+      - name: Start the stack
+        run: |
+          nohup bun run dev > stack.log 2>&1 &
+          for i in $(seq 1 40); do curl -sf localhost:3100/readyz >/dev/null && break; sleep 1; done
+          curl -sf localhost:3100/readyz
+      - name: Install the browser
+        run: cd web && node node_modules/@playwright/test/cli.js install --with-deps chromium
+      - name: End-to-end tests (functional + axe accessibility, light and dark)
+        run: bun run web:e2e
+      - if: failure()
+        run: tail -n 200 stack.log
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: playwright-traces, path: web/test-results }

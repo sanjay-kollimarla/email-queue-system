@@ -16,9 +16,25 @@ paces it to that rate, delivers it at-least-once, and learns from bounces, compl
 | **Observable and sized** | Prometheus metrics, alert rules, and a load-test harness that reports **CPU and RAM per service against production-style limits**. |
 | **Clean architecture** | Ports and adapters, SOLID, one composition root, core services unit-tested with fakes, HTTP layer tested against real MongoDB/Redis. |
 
+## Live demo
+
+**https://admin.tailc8948a.ts.net**: the production stack (3-node MongoDB replica set, Redis with Sentinel, API, relay,
+workers, reaper) running on my own machine behind a Tailscale Funnel, so it can be offline when the machine is.
+
+Try the whole flow in two minutes without giving it any real credentials:
+
+1. **Register** an account on the site.
+2. Get a free throwaway SMTP inbox at **[ethereal.email/create](https://ethereal.email/create)** (one click, no signup). It
+   captures mail and shows it in a web page; nothing is ever delivered to a real address.
+3. In **SMTP accounts → Add**, enter host `smtp.ethereal.email`, port `587` (leave "secure" off, it upgrades with
+   STARTTLS), the username and password Ethereal gave you, that same address as the sender, and **declare a rate**
+   (for example 5 per second). The rate you declare is the ceiling the system will respect.
+4. In **Campaigns**, paste a few recipients (a CSV works; columns become `{{variables}}`), write a message and send.
+5. Watch the **dashboard** pace the sending to your declared rate, then open the Ethereal inbox to read the delivered mail.
+
 ## Contents
 
-[Screenshots](#the-web-app) · [Architecture](#architecture) · [Guarantees](#guarantees) · [Quick start](#quick-start) ·
+[Live demo](#live-demo) · [Screenshots](#the-web-app) · [Architecture](#architecture) · [Guarantees](#guarantees) · [Quick start](#quick-start) ·
 [Command reference](#command-reference) · [Configuration](#configuration) · [Load testing](#load-testing) ·
 [Measured results](#measured-results) · [Code structure](#code-structure) · [Security](#security) ·
 [Observability](#observability) · [Documentation](#documentation) · [Limits](#limits-worth-knowing)

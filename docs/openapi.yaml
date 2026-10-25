@@ -1,0 +1,353 @@
+openapi: 3.0.3
+info:
+  title: Email Queue API
+  version: 1.0.0
+  description: |
+    Multi-tenant email delivery. Each user registers their own SMTP account **with the rate it allows**; mail is
+    accepted durably, paced to that rate and delivered at-least-once.
+
+    * Authenticate with `Authorization: Bearer <accessToken>` (15 min). Renew with `/v1/auth/refresh` (rotating, single use).
+    * Send endpoints accept an optional `Idempotency-Key` header: replaying a request returns the original result.
+    * Errors are `{ "error": string, "details"?: any }`. 422 validation, 401 auth, 404 not found (also for other tenants' ids),
+      409 conflict, 413 too large, 429 rate limited (`Retry-After`).
+servers:
+  - url: http://localhost:3100
+security:
+  - bearer: []
+paths:
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      security: []
+      summary: Create an account
+      requestBody: { $ref: "#/components/requestBodies/Credentials" }
+      responses:
+        "201": { description: "Account created", content: { application/json: { schema: { $ref: "#/components/schemas/AuthResult" } } } }
+        "409": { description: "Email already registered" }
+        "422": { description: "Validation failed (password min 10 chars)" }
+        "429": { description: "Too many attempts from this IP" }
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      security: []
+      summary: Log in
+      requestBody: { $ref: "#/components/requestBodies/Credentials" }
+      responses:
+        "200": { description: "OK", content: { application/json: { schema: { $ref: "#/components/schemas/AuthResult" } } } }
+        "401": { description: "Invalid credentials (identical for unknown email and wrong password)" }
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      summary: Exchange a refresh token for a new pair (rotation; reuse of an old token revokes the whole session family)
+      description: |
+        API clients send `{ "refreshToken" }`. Browsers send **no body**: the token travels in the `eq_rt` HttpOnly,
+        SameSite=Strict cookie (scoped to /v1/auth), which JavaScript cannot read. A cookie-authenticated request must carry
+        an allowed `Origin` header. Send `X-Client: web` to have the refresh token omitted from the JSON body.
+      requestBody:
+        required: false
+        content: { application/json: { schema: { type: object, required: [refreshToken], properties: { refreshToken: { type: string } } } } }
+      responses:
+        "200": { description: "New tokens", content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "401": { description: "Invalid, expired or reused refresh token" }
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      security: []
+      summary: Revoke the session the refresh token belongs to
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [refreshToken], properties: { refreshToken: { type: string } } } } }
+      responses:
+        "200": { description: "OK" }
+  /v1/auth/change-password:
+    post:
+      tags: [auth]
+      summary: Change password; every other session is signed out
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties: { currentPassword: { type: string }, newPassword: { type: string, minLength: 10 } }
+      responses:
+        "200": { description: "New tokens", content: { application/json: { schema: { $ref: "#/components/schemas/TokenPair" } } } }
+        "401": { description: "Current password incorrect" }
+  /v1/auth/me:
+    get:
+      tags: [auth]
+      summary: The authenticated user
+      responses:
+        "200": { description: "OK" }
+        "401": { description: "Not authenticated" }
+  /v1/smtp:
+    get:
+      tags: [smtp]
+      summary: List my SMTP accounts
+      responses:
+        "200": { description: "OK", content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: "#/components/schemas/SmtpAccount" } } } } } } }
+    post:
+      tags: [smtp]
+      summary: Add an SMTP account (credentials are verified unless skipVerify)
+      description: |
+        `limits.perSecond` or `limits.perMinute` is **required**: SMTP cannot report a provider's limits, so you declare
+        them. That value is the hard ceiling; the adaptive controller may go lower if the provider throttles.
+        For known providers the response carries a `providerHint` with documented limits.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/NewSmtpAccount" } } }
+      responses:
+        "201": { description: "Created", content: { application/json: { schema: { $ref: "#/components/schemas/SmtpAccount" } } } }
+        "409": { description: "Account limit reached (20)" }
+        "422": { description: "Validation failed, rate missing, unreachable host, bad credentials, or host resolves to a private address" }
+  /v1/smtp/hints:
+    get:
+      tags: [smtp]
+      summary: Documented limits for a known provider host (a hint for the form, never applied automatically)
+      parameters: [{ name: host, in: query, required: true, schema: { type: string } }]
+      responses:
+        "200": { description: "{ provider, limits?, maxConnections?, note? }; provider is \"custom\" when unknown" }
+  /v1/smtp/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [smtp]
+      summary: One SMTP account with its current effective rate
+      responses: { "200": { description: "OK" }, "404": { description: "Not found" } }
+    patch:
+      tags: [smtp]
+      summary: Change settings or limits (re-verifies when connection settings change; resets learned rate when limits change)
+      responses: { "200": { description: "OK" }, "404": { description: "Not found" }, "422": { description: "Validation failed" } }
+    delete:
+      tags: [smtp]
+      summary: Delete an account (its queued mail fails with "smtp account was deleted")
+      responses: { "200": { description: "OK" }, "404": { description: "Not found" } }
+  /v1/smtp/{id}/verify:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    post:
+      tags: [smtp]
+      summary: Re-test credentials; on success clears an auth_failed state and resumes sending
+      responses: { "200": { description: "OK" }, "422": { description: "Verification failed" } }
+  /v1/emails:
+    get:
+      tags: [emails]
+      summary: "List my emails, newest first (cursor pagination)"
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/EmailStatus" } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+        - { name: before, in: query, schema: { type: string }, description: nextCursor from the previous page }
+      responses: { "200": { description: "OK" } }
+    post:
+      tags: [emails]
+      summary: Send one email
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SendEmail" } } }
+      responses:
+        "202": { description: "Accepted (durably stored; delivery is asynchronous)", content: { application/json: { schema: { $ref: "#/components/schemas/Accepted" } } } }
+        "200": { description: "Replay of an earlier request with the same Idempotency-Key" }
+        "409": { description: "No SMTP account, or the account's credentials failed" }
+        "413": { description: "Body over 12 MB" }
+        "422": { description: "Validation failed" }
+        "429": { description: "Send rate limit for this user" }
+  /v1/emails/batch:
+    post:
+      tags: [emails]
+      summary: Send one template to up to 1,000 recipients (per-recipient variables)
+      description: The template is stored once however many recipients; replays are idempotent per recipient. Bulk mail gets one-click List-Unsubscribe headers when PUBLIC_BASE_URL is configured.
+      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SendBatch" } } }
+      responses:
+        "202": { description: "Accepted", content: { application/json: { schema: { $ref: "#/components/schemas/BatchAccepted" } } } }
+        "422": { description: "Validation failed (max 1,000 recipients, 5 attachments, 8 MB attachments in total)" }
+        "429": { description: "Send rate limit for this user" }
+  /v1/emails/{id}:
+    parameters: [{ $ref: "#/components/parameters/Id" }]
+    get:
+      tags: [emails]
+      summary: Status of one email
+      responses: { "200": { description: "OK" }, "404": { description: "Not found" } }
+  /v1/dashboard:
+    get:
+      tags: [emails]
+      summary: Everything the dashboard needs in one call
+      description: Per-status counts, a sent-per-5-seconds series for the last 3 minutes (continuous axis; the server reports bucketSec), recent problems and every SMTP account with its live rate state.
+      responses:
+        "200": { description: "OK" }
+  /v1/meta:
+    get:
+      tags: [ops]
+      security: []
+      summary: Public, tiny capability document for the web app
+      responses:
+        "200": { description: "{ demo, version, demoSmtp? } (demoSmtp only when the server runs in demo mode)" }
+  /v1/stats:
+    get:
+      tags: [emails]
+      summary: Exact per-status counts
+      parameters: [{ name: smtpId, in: query, schema: { type: string } }]
+      responses: { "200": { description: "OK" } }
+  /v1/suppressions:
+    get:
+      tags: [suppressions]
+      summary: List suppressed recipients
+      responses: { "200": { description: "OK" } }
+    post:
+      tags: [suppressions]
+      summary: Suppress a recipient
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string }, reason: { type: string } } } } }
+      responses: { "201": { description: "OK" } }
+  /v1/suppressions/{email}:
+    delete:
+      tags: [suppressions]
+      summary: Remove a suppression
+      parameters: [{ name: email, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: "OK" }, "404": { description: "Not suppressed" } }
+  /v1/webhooks/{smtpId}/{token}:
+    post:
+      tags: [feedback]
+      security: []
+      summary: "Delivery feedback (bounces, complaints) from your provider"
+      description: |
+        The full URL (including its signed token) is returned as `webhookUrl` on your SMTP account. Accepts Amazon SES via SNS
+        (subscription auto-confirmed), SendGrid Event Webhook, Mailgun webhooks, or `{ "events": [{ "type": "bounce|soft_bounce|complaint", "email", "reason" }] }`.
+        Hard bounces and complaints suppress the recipient and mark the email `bounced` / `complained`.
+      responses: { "200": { description: "Processed" }, "404": { description: "Unknown account or bad token" }, "422": { description: "Unrecognized payload" } }
+  /u/{token}:
+    get:
+      tags: [feedback]
+      security: []
+      summary: "Unsubscribe confirmation page (no side effects, so link scanners cannot unsubscribe anyone)"
+      parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: "HTML page" }, "404": { description: "Invalid link" } }
+    post:
+      tags: [feedback]
+      security: []
+      summary: Unsubscribe (also the RFC 8058 one-click request mail clients send)
+      parameters: [{ name: token, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: "Unsubscribed" }, "404": { description: "Invalid link" } }
+  /healthz:
+    get:
+      tags: [ops]
+      security: []
+      summary: Liveness
+      responses: { "200": { description: "OK" } }
+  /readyz:
+    get:
+      tags: [ops]
+      security: []
+      summary: Readiness (MongoDB + Redis)
+      responses: { "200": { description: "OK" }, "503": { description: "A dependency is down" } }
+  /metrics:
+    get:
+      tags: [ops]
+      security: []
+      summary: "Prometheus metrics (requires `Authorization: Bearer $METRICS_TOKEN` when configured)"
+      responses: { "200": { description: "Prometheus text format" }, "401": { description: "Token required" } }
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, pattern: "^[0-9a-f]{24}$" } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: false, schema: { type: string, maxLength: 128 }, description: Replaying with the same key returns the original result }
+  requestBodies:
+    Credentials:
+      required: true
+      content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string, format: email }, password: { type: string, minLength: 10, maxLength: 128 } } } } }
+  schemas:
+    TokenPair:
+      type: object
+      properties: { accessToken: { type: string }, refreshToken: { type: string }, tokenType: { type: string, enum: [Bearer] }, expiresIn: { type: integer } }
+    AuthResult:
+      allOf:
+        - { $ref: "#/components/schemas/TokenPair" }
+        - { type: object, properties: { user: { type: object, properties: { id: { type: string }, email: { type: string } } } } }
+    EmailStatus: { type: string, enum: [queued, sending, sent, failed, suppressed, bounced, complained] }
+    Limits:
+      type: object
+      additionalProperties: false
+      description: At least one of perSecond / perMinute is required.
+      properties: { perSecond: { type: number }, perMinute: { type: number }, perDay: { type: integer, description: Rolling 24-hour cap } }
+    NewSmtpAccount:
+      type: object
+      required: [name, host, username, password, fromEmail, limits]
+      properties:
+        name: { type: string }
+        host: { type: string }
+        port: { type: integer, default: 587 }
+        secure: { type: boolean }
+        username: { type: string }
+        password: { type: string, writeOnly: true }
+        fromEmail: { type: string }
+        fromName: { type: string }
+        limits: { $ref: "#/components/schemas/Limits" }
+        maxConnections: { type: integer, default: 5, maximum: 50 }
+        skipVerify: { type: boolean, default: false }
+    SmtpAccount:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        host: { type: string }
+        port: { type: integer }
+        provider: { type: string }
+        health: { type: string, enum: [ok, auth_failed] }
+        webhookUrl: { type: string, description: Present when the server has a public base URL }
+        rate:
+          type: object
+          properties:
+            declared: { $ref: "#/components/schemas/Limits" }
+            ceilingPerSec: { type: number }
+            dailyCap: { type: integer, nullable: true }
+            currentPerSec: { type: number, nullable: true }
+            learnedLimitPerSec: { type: number, nullable: true }
+            pausedUntil: { type: string, format: date-time, nullable: true }
+    Attachment:
+      type: object
+      required: [filename, contentBase64]
+      properties: { filename: { type: string }, contentType: { type: string, default: application/octet-stream }, contentBase64: { type: string } }
+    SendEmail:
+      type: object
+      required: [to, subject]
+      description: At least one of text / html. `{{var}}` placeholders are filled from `vars` (HTML-escaped in the html part).
+      properties:
+        smtpId: { type: string, description: Required when you have several SMTP accounts }
+        to: { type: string }
+        subject: { type: string }
+        text: { type: string }
+        html: { type: string }
+        vars: { type: object, additionalProperties: { type: string } }
+        priority: { type: string, enum: [transactional, bulk], default: transactional }
+        attachments: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/Attachment" } }
+    SendBatch:
+      type: object
+      required: [subject, recipients]
+      properties:
+        smtpId: { type: string }
+        subject: { type: string }
+        text: { type: string }
+        html: { type: string }
+        priority: { type: string, enum: [transactional, bulk], default: bulk }
+        attachments: { type: array, maxItems: 5, items: { $ref: "#/components/schemas/Attachment" } }
+        recipients:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items: { type: object, required: [to], properties: { to: { type: string }, vars: { type: object, additionalProperties: { type: string } } } }
+    Accepted:
+      type: object
+      properties: { id: { type: string }, to: { type: string }, status: { $ref: "#/components/schemas/EmailStatus" }, replayed: { type: boolean } }
+    BatchAccepted:
+      type: object
+      properties:
+        count: { type: integer }
+        queued: { type: integer }
+        suppressed: { type: integer }
+        replayed: { type: integer }
+        accepted: { type: array, items: { $ref: "#/components/schemas/Accepted" } }

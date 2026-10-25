@@ -18,7 +18,7 @@ paces it to that rate, delivers it at-least-once, and learns from bounces, compl
 
 ## Live demo
 
-**https://admin.tailc8948a.ts.net**: the production stack (3-node MongoDB replica set, Redis with Sentinel, API, relay,
+**https://sanjay-kollimarla-email-queue.tailc8948a.ts.net**: the production stack (3-node MongoDB replica set, Redis with Sentinel, API, relay,
 workers, reaper) running on my own machine behind a Tailscale Funnel, so it can be offline when the machine is.
 
 Try the whole flow in two minutes without giving it any real credentials:

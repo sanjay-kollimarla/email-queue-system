@@ -1,0 +1,3 @@
+[test]
+# the web app has its own bunfig (DOM environment); keep the server suite to ./tests
+root = "./tests"

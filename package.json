@@ -1,0 +1,50 @@
+{
+  "name": "email-queue-system",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Multi-tenant, high-throughput email queue: Bun + BullMQ + Redis + MongoDB",
+  "scripts": {
+    "dev": "bun run src/scripts/dev.ts",
+    "api": "bun run src/api/server.ts",
+    "worker": "bun run src/workers/send-worker.ts",
+    "worker:cluster": "bun run src/workers/cluster.ts",
+    "relay": "bun run src/workers/outbox-relay.ts",
+    "reaper": "bun run src/workers/reaper.ts",
+    "smoke": "bun run src/loadtest/smoke.ts",
+    "chaos": "bun run src/loadtest/chaos.ts",
+    "sink": "bun run src/loadtest/smtp-sink.ts",
+    "loadtest": "bun run src/loadtest/run.ts",
+    "lt:up": "docker compose -f docker-compose.loadtest.yml up -d --build --wait",
+    "lt:down": "docker compose -f docker-compose.loadtest.yml down -v",
+    "requeue": "bun run src/scripts/requeue.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome lint src tests web/src web/tests web/e2e",
+    "format": "biome format --write src tests web/src web/tests web/e2e",
+    "format:check": "biome format src tests web/src web/tests web/e2e",
+    "rotate-keys": "bun run src/scripts/rotate-keys.ts",
+    "ci": "bun run typecheck && bun run web:typecheck && bun run lint && bun run format:check && bun test && bun run web:test && bun run web:build",
+    "web:install": "bun install --cwd web",
+    "web:dev": "bun run --cwd web dev",
+    "web:build": "bun run --cwd web build",
+    "web:test": "bun run --cwd web test",
+    "web:e2e": "bun run --cwd web e2e",
+    "web:typecheck": "bun run --cwd web typecheck",
+    "web:screens": "bun run --cwd web screens"
+  },
+  "dependencies": {
+    "bullmq": "^5.80.6",
+    "hono": "^4.13.14",
+    "ioredis": "^5.11.1",
+    "mongodb": "^7.7.0",
+    "nodemailer": "^10.2.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.3",
+    "@types/bun": "^1.4.4",
+    "@types/nodemailer": "^8.0.2",
+    "typescript": "^7.0.2"
+  }
+}

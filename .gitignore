@@ -1,0 +1,13 @@
+node_modules
+.env
+*.log
+.env.prod
+web/dist
+web/node_modules
+web/test-results
+web/playwright-report
+.run
+.env.prod.bak
+/bun
+report.txt
+loadtest-report.txt

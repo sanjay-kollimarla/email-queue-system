@@ -1,0 +1,168 @@
+# Production-shaped topology (single host; the same layout maps 1:1 onto separate hosts / managed services):
+#   MongoDB   3-node replica set, keyfile + auth        -> survives the loss of any one node
+#   Redis     master + replica + 3 sentinels, password  -> automatic failover, clients follow it
+#   App       api, relay, reaper, 3 workers, all with healthchecks and a graceful-drain grace period
+#
+#   cp .env.prod.example .env.prod   # fill in real secrets
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Real production should add: TLS in front of the API (reverse proxy / load balancer), TLS between
+# nodes if they leave a private network, volume snapshots/backups (docs/RUNBOOK.md), and a secret
+# manager instead of an env file.
+x-app-env: &app-env
+  MONGO_URL: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo1:27017,mongo2:27017,mongo3:27017/?replicaSet=rs0&authSource=admin
+  MONGO_DB: emailq
+  REDIS_SENTINELS: sentinel1:26379,sentinel2:26379,sentinel3:26379
+  REDIS_MASTER_NAME: mymaster
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  JWT_SECRET: ${JWT_SECRET}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  ENCRYPTION_KEY_ID: ${ENCRYPTION_KEY_ID:-k1}
+  ENCRYPTION_OLD_KEYS: ${ENCRYPTION_OLD_KEYS:-}
+  LINK_SIGNING_KEY: ${LINK_SIGNING_KEY}
+  LINK_SIGNING_OLD_KEYS: ${LINK_SIGNING_OLD_KEYS:-}
+  MESSAGE_ID_DOMAIN: ${MESSAGE_ID_DOMAIN}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+  METRICS_TOKEN: ${METRICS_TOKEN:-}
+  ALLOW_PRIVATE_SMTP_HOSTS: ${ALLOW_PRIVATE_SMTP_HOSTS:-false}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-200}
+  DEMO_MODE: ${DEMO_MODE:-false}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+  EMAIL_RETENTION_DAYS: ${EMAIL_RETENTION_DAYS:-30}
+
+x-app: &app
+  build: .
+  restart: unless-stopped
+  environment: *app-env
+  stop_grace_period: 40s   # workers drain in-flight sends on SIGTERM
+  depends_on:
+    mongo-init: { condition: service_completed_successfully }
+    redis-master: { condition: service_healthy }
+    sentinel1: { condition: service_started }
+  deploy:
+    resources:
+      limits: { memory: 1g }
+
+x-mongo: &mongo
+  image: mongo:7
+  restart: unless-stopped
+  command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--keyFile", "/keys/mongo.key"]
+  volumes: ["mongo-keys:/keys:ro"]
+  depends_on:
+    mongo-keygen: { condition: service_completed_successfully }
+
+x-sentinel: &sentinel
+  image: redis:7
+  restart: unless-stopped
+  environment: { REDIS_PASSWORD: "${REDIS_PASSWORD}" }
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      cat > /tmp/sentinel.conf <<CONF
+      port 26379
+      sentinel monitor mymaster 172.28.0.10 6379 2
+      sentinel auth-pass mymaster $$REDIS_PASSWORD
+      sentinel down-after-milliseconds mymaster 4000
+      sentinel failover-timeout mymaster 10000
+      sentinel parallel-syncs mymaster 1
+      CONF
+      exec redis-sentinel /tmp/sentinel.conf
+  depends_on: { redis-master: { condition: service_healthy } }
+
+services:
+  # ---------- MongoDB replica set ----------
+  mongo-keygen:
+    image: mongo:7
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["[ -f /keys/mongo.key ] || (openssl rand -base64 756 > /keys/mongo.key); chmod 400 /keys/mongo.key; chown 999:999 /keys/mongo.key"]
+    volumes: ["mongo-keys:/keys"]
+  mongo1:
+    <<: *mongo
+    volumes: ["mongo1-data:/data/db", "mongo-keys:/keys:ro"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  mongo2:
+    <<: *mongo
+    volumes: ["mongo2-data:/data/db", "mongo-keys:/keys:ro"]
+  mongo3:
+    <<: *mongo
+    volumes: ["mongo3-data:/data/db", "mongo-keys:/keys:ro"]
+  mongo-init:
+    image: mongo:7
+    network_mode: "service:mongo1"      # localhost == mongo1, so the localhost exception allows creating the first user
+    depends_on:
+      mongo1: { condition: service_healthy }
+      mongo2: { condition: service_started }
+      mongo3: { condition: service_started }
+    environment: { MONGO_USER: "${MONGO_USER}", MONGO_PASSWORD: "${MONGO_PASSWORD}" }
+    volumes: ["./deploy/mongo-init.js:/init.js:ro"]
+    command: ["mongosh", "--quiet", "/init.js"]
+    restart: "no"
+
+  # ---------- Redis with Sentinel failover ----------
+  redis-master:
+    image: redis:7
+    restart: unless-stopped
+    networks: { default: { ipv4_address: 172.28.0.10 } }
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD}", "--masterauth", "${REDIS_PASSWORD}"]
+    volumes: ["redis-master-data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    environment: { REDIS_PASSWORD: "${REDIS_PASSWORD}" }
+  redis-replica:
+    image: redis:7
+    restart: unless-stopped
+    networks: { default: { ipv4_address: 172.28.0.11 } }
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD}", "--masterauth", "${REDIS_PASSWORD}", "--replicaof", "172.28.0.10", "6379"]
+    volumes: ["redis-replica-data:/data"]
+    depends_on: { redis-master: { condition: service_healthy } }
+  sentinel1: *sentinel
+  sentinel2: *sentinel
+  sentinel3: *sentinel
+
+  # ---------- application ----------
+  api:
+    <<: *app
+    command: ["bun", "run", "src/api/server.ts"]
+    ports: ["${API_PORT:-3100}:3000"]
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+  relay:
+    <<: *app
+    command: ["bun", "run", "src/workers/outbox-relay.ts"]
+  reaper:
+    <<: *app
+    command: ["bun", "run", "src/workers/reaper.ts"]
+  worker:
+    <<: *app
+    command: ["bun", "run", "src/workers/send-worker.ts"]
+    deploy:
+      replicas: 3
+      resources:
+        limits: { memory: 1g }
+
+# Static addresses for the Redis pair: Sentinel tracks nodes by IP. With hostnames, Docker drops the DNS
+# entry of a stopped container and Sentinel enters TILT mode instead of failing over. Real hosts and
+# managed Redis have stable addresses, so this is only needed for the single-host layout.
+networks:
+  default:
+    ipam:
+      config: [{ subnet: 172.28.0.0/24 }]
+
+volumes:
+  mongo-keys:
+  mongo1-data:
+  mongo2-data:
+  mongo3-data:
+  redis-master-data:
+  redis-replica-data:

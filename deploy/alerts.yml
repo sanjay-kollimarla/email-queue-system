@@ -1,0 +1,50 @@
+# Prometheus alerting rules for the email queue. Scrape GET /metrics on the API (Authorization: Bearer $METRICS_TOKEN).
+# Every alert links to a section of docs/RUNBOOK.md.
+groups:
+  - name: emailq
+    rules:
+      - alert: EmailQueueFallingBehind
+        expr: emailq_queue_oldest_waiting_age_seconds > 120
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Ready jobs in {{ $labels.lane }} have waited over 2 minutes"
+          description: "Workers cannot keep up (or no worker is running). See RUNBOOK: 'Queue falling behind'."
+
+      - alert: EmailSendingStalled
+        expr: increase(emailq_sent_total[10m]) == 0 and sum(emailq_queue_jobs{state=~"waiting|active"}) > 0
+        for: 10m
+        labels: { severity: page }
+        annotations:
+          summary: "Jobs are queued but nothing has been sent for 10 minutes"
+          description: "Workers down, every SMTP account paused/auth-failed, or Redis/Mongo unreachable. See RUNBOOK: 'Nothing is sending'."
+
+      - alert: EmailFailuresRising
+        expr: increase(emailq_failed_total[15m]) > 50
+        labels: { severity: ticket }
+        annotations:
+          summary: "More than 50 emails failed permanently in 15 minutes"
+          description: "Bad recipients, or a provider rejecting mail. Check failed jobs and lastError. See RUNBOOK: 'Failures rising'."
+
+      - alert: SmtpThrottlingSustained
+        expr: increase(emailq_throttled_total[15m]) > 200
+        labels: { severity: ticket }
+        annotations:
+          summary: "Providers keep rate-limiting us"
+          description: "The declared rate is higher than the provider really allows. Lower limits.perSecond/perMinute. See RUNBOOK: 'Throttling'."
+
+      - alert: EmailJobsFailedInQueue
+        expr: emailq_queue_jobs{state="failed"} > 100
+        for: 15m
+        labels: { severity: ticket }
+        annotations:
+          summary: "{{ $value }} failed jobs retained in {{ $labels.lane }}"
+          description: "See RUNBOOK: 'Failures rising'."
+
+      - alert: EmailApiDown
+        expr: up{job="emailq-api"} == 0
+        for: 2m
+        labels: { severity: page }
+        annotations:
+          summary: "Email API is not answering /metrics"
+          description: "See RUNBOOK: 'API down'. /readyz reports MongoDB/Redis reachability."

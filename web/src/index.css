@@ -1,0 +1,163 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/*
+ * Design tokens. Components never use raw colors: they use these semantic roles, so light/dark (and any
+ * future theme) is a change to this file only. Contrast: every text/background pair below is >= WCAG AA.
+ */
+:root {
+  color-scheme: light;
+  --page: #f6f7fb;
+  --surface: #ffffff;
+  --subtle: #f0f2f8;
+  --line: #e2e5ef;
+  --line-strong: #cdd2e1;
+  --fg: #12162b;
+  --muted: #5a6280;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef0ff;
+  --on-accent: #ffffff;
+  --ok: #0b6e4b;
+  --ok-soft: #e4f7ee;
+  --warn: #a15c00;
+  --warn-soft: #fff3df;
+  --bad: #c02635;
+  --bad-soft: #fde9ec;
+  --info: #1a62c7;
+  --info-soft: #e6f0fd;
+  --violet: #7a3fd1;
+  --violet-soft: #f1e9fd;
+  --shadow: 0 1px 2px rgb(18 22 43 / 6%), 0 4px 16px rgb(18 22 43 / 5%);
+  --ring: 0 0 0 3px rgb(79 70 229 / 35%);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0b0e1a;
+  --surface: #131830;
+  --subtle: #1a2040;
+  --line: #262d52;
+  --line-strong: #353e6b;
+  --fg: #eceffd;
+  --muted: #9aa3c7;
+  --accent: #8b93ff;
+  --accent-hover: #a3a9ff;
+  --accent-soft: #232a5c;
+  --on-accent: #0b0e1a;
+  --ok: #46d39a;
+  --ok-soft: #12332b;
+  --warn: #f2b84b;
+  --warn-soft: #3a2d12;
+  --bad: #ff7b8a;
+  --bad-soft: #3b1a22;
+  --info: #6cb0ff;
+  --info-soft: #14284a;
+  --violet: #c29bff;
+  --violet-soft: #2c1d4d;
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 35%);
+  --ring: 0 0 0 3px rgb(139 147 255 / 45%);
+}
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --color-page: var(--page);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --shadow-card: var(--shadow);
+}
+
+@layer base {
+  html {
+    background: var(--page);
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    color: var(--fg);
+    background: var(--page);
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--ring);
+    border-radius: 6px;
+  }
+  button,
+  [role="button"],
+  select,
+  summary {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Motion is decorative: people who ask for less get none. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@keyframes flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(70 211 154 / 55%);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgb(70 211 154 / 0%);
+  }
+}
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}

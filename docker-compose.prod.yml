@@ -27,6 +27,8 @@ x-app-env: &app-env
   ALLOW_PRIVATE_SMTP_HOSTS: ${ALLOW_PRIVATE_SMTP_HOSTS:-false}
   WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-200}
   DEMO_MODE: ${DEMO_MODE:-false}
+  DEMO_SMTP_HOST: ${DEMO_SMTP_HOST:-sink}   # the fake SMTP server below; only used when DEMO_MODE=true
+  DEMO_SMTP_PORT: ${DEMO_SMTP_PORT:-2525}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
   EMAIL_RETENTION_DAYS: ${EMAIL_RETENTION_DAYS:-30}
 
@@ -150,6 +152,16 @@ services:
       replicas: 3
       resources:
         limits: { memory: 1g }
+
+  # Fake SMTP server for DEMO_MODE: accepts and discards every message, so visitors can watch the pipeline work
+  # without anything being delivered. Internal only (no published ports); harmless to leave running when demo is off.
+  sink:
+    <<: *app
+    command: ["bun", "run", "src/loadtest/smtp-sink.ts"]
+    depends_on: {}
+    deploy:
+      resources:
+        limits: { memory: 512m }
 
 # Static addresses for the Redis pair: Sentinel tracks nodes by IP. With hostnames, Docker drops the DNS
 # entry of a stopped container and Sentinel enters TILT mode instead of failing over. Real hosts and

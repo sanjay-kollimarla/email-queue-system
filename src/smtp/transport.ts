@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { config } from "../config.ts";
 import { decrypt } from "../lib/crypto.ts";
+import { isDemoSinkHost } from "./host-guard.ts";
 import type { SmtpAccountDoc } from "../db/mongo.ts";
 
 interface Entry {
@@ -18,7 +19,7 @@ function baseOptions(a: SmtpAccountDoc) {
     port: a.port,
     secure: a.secure,
     auth: { user: a.username, pass: decrypt(a.passwordEnc) },
-    requireTLS: !a.secure && !config.ALLOW_PRIVATE_SMTP_HOSTS,
+    requireTLS: !a.secure && !config.ALLOW_PRIVATE_SMTP_HOSTS && !isDemoSinkHost(a.host),
     tls: { minVersion: "TLSv1.2" as const },
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,

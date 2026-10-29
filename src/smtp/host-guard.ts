@@ -23,13 +23,19 @@ function isPrivateV6(ip: string): boolean {
   return mapped ? isPrivateV4(mapped[1]!) : false;
 }
 
+export function isDemoSinkHost(host: string): boolean {
+  const h = host.toLowerCase();
+  if (!config.DEMO_MODE || h === "localhost" || h.startsWith("127.") || h === "::1") return false;
+  return h === config.DEMO_SMTP_HOST.toLowerCase();
+}
+
 /**
  * SSRF guard: users supply arbitrary SMTP hosts, and the worker will open sockets to them.
  * Without this, a tenant could point us at 169.254.169.254, redis:6379, mongo:27017, etc.
  * (Does not defend against DNS rebinding between verify and send; pin IPs if you need that.)
  */
 export async function assertPublicHost(host: string): Promise<void> {
-  if (config.ALLOW_PRIVATE_SMTP_HOSTS) return;
+  if (config.ALLOW_PRIVATE_SMTP_HOSTS || isDemoSinkHost(host)) return;
   const addrs = isIPv4(host) || isIPv6(host) ? [{ address: host }] : await lookup(host, { all: true });
   for (const { address } of addrs) {
     if (isIPv4(address) ? isPrivateV4(address) : isPrivateV6(address)) {

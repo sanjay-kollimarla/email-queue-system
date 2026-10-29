@@ -15,6 +15,7 @@ automatically by the reaper (see *Redis lost data*).
 | MongoDB | 3-node replica set, keyfile + auth | loss of any one node (verified: primary killed under load, 0 emails lost) |
 | Redis | master + replica + 3 Sentinels, password, AOF | loss of the master (verified: failover under load, 0 emails lost) |
 | API / relay / reaper / workers | stateless containers, healthchecks, 40s drain period | any of them restarting; workers can be added or removed at any time |
+| sink | fake SMTP server, internal only; used only when `DEMO_MODE=true` | not needed for real delivery; safe to stop |
 
 Put TLS termination (reverse proxy / load balancer) in front of the API; set `PUBLIC_BASE_URL` to its public URL
 (used in `List-Unsubscribe` links and webhook URLs).
@@ -25,6 +26,10 @@ Put TLS termination (reverse proxy / load balancer) in front of the API; set `PU
 cp .env.prod.example .env.prod        # fill every secret: openssl rand -hex 32
 docker compose -p eqprod -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
+
+Public demo: set `DEMO_MODE=true` in `.env.prod`. The UI then shows a scrolling "this is just a demo" banner and a
+one-click demo account that sends to the `sink` service, so nothing is delivered. Keep `ALLOW_PRIVATE_SMTP_HOSTS=false`;
+in demo mode only the exact `DEMO_SMTP_HOST` (`sink`) is exempt from the private-address check. Leave it `false` for a real deployment.
 
 Rolling upgrade: rebuild, then restart services one group at a time (`worker` last). Workers receive SIGTERM, finish
 in-flight sends (they stop within seconds), and exit; **a graceful stop never causes a duplicate** (verified).

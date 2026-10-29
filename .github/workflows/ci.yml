@@ -41,6 +41,7 @@ jobs:
       ENCRYPTION_KEY: 2f1c9a7e5b3d8c4a6e0f1b2d3c4a5968778695a4b3c2d1e0f9e8d7c6b5a49382
       ALLOW_PRIVATE_SMTP_HOSTS: "true"
       DEMO_MODE: "true"
+      SKIP_INFRA: "1" # this job starts Mongo and Redis itself (below); `bun run dev` must not start them again
       PORT: "3100"
       AUTH_RATE_LIMIT_SCALE: "100" # the suite registers dozens of users from one IP
     steps:

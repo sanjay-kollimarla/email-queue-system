@@ -1,6 +1,7 @@
 import { Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
+import { DEMO_EMAIL_DOMAIN } from "../../app/credits";
 import { useApi } from "../../app/services";
 import { ApiError } from "../../shared/api/http";
 import { useMeta } from "../../shared/api/queries";
@@ -28,7 +29,7 @@ export function DemoButton() {
   const start = async () => {
     setBusy(true);
     try {
-      await auth.register({ email: `demo-${randomId()}@courier-demo.test`, password: `${randomId()}${randomId()}` });
+      await auth.register({ email: `demo-${randomId()}@${DEMO_EMAIL_DOMAIN}`, password: `${randomId()}${randomId()}` });
       if (demoSmtp) {
         await api.smtp.create({
           name: "Demo SMTP (local sink)",

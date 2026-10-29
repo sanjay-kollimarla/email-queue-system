@@ -1,5 +1,6 @@
 import { useMeta } from "../shared/api/queries";
-import { AUTHOR } from "./credits";
+import { useAuth } from "../features/auth/auth-context";
+import { AUTHOR, DEMO_EMAIL_DOMAIN } from "./credits";
 
 /** Slim strip above every screen: who wrote this, and where to find them and the code. */
 export function CreditsBar() {
@@ -23,10 +24,12 @@ export function CreditsBar() {
 const DEMO_NOTICE =
   "This is just a demo: the backend only mimics an SMTP host, so no emails are actually sent. To see the real thing, create an account and set up your own SMTP account.";
 
-/** Demo mode only: a scrolling notice (static and wrapped for people who ask for less motion). */
+/** Only for demo accounts (signed in, demo mode on): a scrolling notice, static and wrapped under reduced motion. */
 export function DemoBanner() {
   const meta = useMeta();
-  if (!meta.data?.demo) return null;
+  const { state } = useAuth();
+  const isDemoAccount = state.status === "authenticated" && state.user.email.toLowerCase().endsWith(`@${DEMO_EMAIL_DOMAIN}`);
+  if (!meta.data?.demo || !isDemoAccount) return null;
   return (
     <div role="status" className="group overflow-hidden border-b border-amber-500/40 bg-amber-500/15 py-2 text-sm text-fg">
       <span className="sr-only">{DEMO_NOTICE}</span>

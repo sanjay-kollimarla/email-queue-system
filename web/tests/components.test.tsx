@@ -5,6 +5,7 @@ import { useState } from "react";
 import { CredentialsForm } from "../src/features/auth/credentials-form";
 import { AccountRate } from "../src/features/dashboard/account-rates";
 import { DashboardPage } from "../src/features/dashboard/dashboard-page";
+import { DemoBanner } from "../src/app/site-bar";
 import { findDemoAccount } from "../src/features/demo/demo-panel";
 import { ApiError } from "../src/shared/api/http";
 import { EMAIL_STATUSES } from "../src/shared/api/schemas";
@@ -151,6 +152,26 @@ describe("sign in form", () => {
     off.unmount();
     renderApp(<CredentialsForm mode="login" />, fakeServices({ meta: async () => ({ demo: true, version: "1" }) }), { auth: ANON });
     expect(await screen.findByRole("button", { name: "Explore with a demo account" })).toBeTruthy();
+  });
+});
+
+describe("demo banner", () => {
+  const demoMeta = fakeServices({ meta: async () => ({ demo: true, version: "1" }) });
+  test("shows only to a signed-in demo account", async () => {
+    const demo = renderApp(<DemoBanner />, demoMeta, {
+      auth: { status: "authenticated", user: { id: "u1", email: "demo-abc123@courier-demo.test" } },
+    });
+    expect((await screen.findAllByText(/no emails are actually sent/)).length).toBeGreaterThan(0);
+    demo.unmount();
+
+    const regular = renderApp(<DemoBanner />, demoMeta, { auth: { status: "authenticated", user: { id: "u2", email: "me@x.co" } } });
+    await Promise.resolve();
+    expect(screen.queryAllByText(/no emails are actually sent/)).toHaveLength(0);
+    regular.unmount();
+
+    renderApp(<DemoBanner />, demoMeta, { auth: ANON });
+    await Promise.resolve();
+    expect(screen.queryAllByText(/no emails are actually sent/)).toHaveLength(0);
   });
 });
 

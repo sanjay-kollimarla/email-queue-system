@@ -1,3 +1,6 @@
+/** Accounts made by "Explore with a demo account" use this email domain; the demo banner is shown only to them. */
+export const DEMO_EMAIL_DOMAIN = "courier-demo.test";
+
 /** Who built this. A link with an empty URL is simply not rendered, so fill the blanks in and rebuild. */
 export const AUTHOR = {
   name: "Sanjay Kollimarla",

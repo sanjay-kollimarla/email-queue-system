@@ -1,7 +1,7 @@
 import { Activity, Gauge, ShieldCheck, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { Brand } from "../../app/brand";
-import { CreditsBar, DemoBanner } from "../../app/site-bar";
+import { CreditsBar } from "../../app/site-bar";
 
 const POINTS = [
   {
@@ -27,7 +27,6 @@ export function AuthLayout({ title, subtitle, children }: { title: string; subti
   return (
     <div className="flex min-h-dvh flex-col">
       <CreditsBar />
-      <DemoBanner />
       <div className="grid flex-1 lg:grid-cols-[1.05fr_1fr]">
         <aside className="relative hidden flex-col justify-between overflow-hidden bg-[#0f1330] p-12 text-white lg:flex">
           <div

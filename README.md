@@ -6,6 +6,8 @@ paces it to that rate, delivers it at-least-once, and learns from bounces, compl
 
 `Bun` · `TypeScript` · `BullMQ` · `Redis` · `MongoDB (replica set)` · `React 19` · `Docker`
 
+Built by **Sanjay Kollimarla** · [LinkedIn](https://linkedin.com/in/kollimarla-sai-sanjay) · [Portfolio](https://sanjay-kollimarla.vercel.app/) · [GitHub](https://github.com/sanjay-kollimarla) · [Source code](https://github.com/sanjay-kollimarla/email-queue-system)
+
 | | |
 |---|---|
 | **Durable** | Every accepted email is in MongoDB (`w:majority`, inside a transaction) *before* the API answers `202`. Redis is a cache that may lose data; the reaper rebuilds anything it loses. |
@@ -21,7 +23,12 @@ paces it to that rate, delivers it at-least-once, and learns from bounces, compl
 **https://sanjay-kollimarla-email-queue.tailc8948a.ts.net**: the production stack (3-node MongoDB replica set, Redis with Sentinel, API, relay,
 workers, reaper) running on my own machine behind a Tailscale Funnel, so it can be offline when the machine is.
 
-Try the whole flow in two minutes without giving it any real credentials:
+The live site runs in **demo mode**: a scrolling banner says so. Use **"Explore with a demo account"** on the sign-in page
+for a one-click account wired to a bundled fake SMTP server. It accepts and discards every message, so you can fire a
+campaign and watch the queue, pacing and dashboard work, but **no email is actually sent**.
+
+To see real delivery, create your own account and set up an SMTP account (below); a free Ethereal inbox needs no real
+credentials. Try the whole flow in two minutes:
 
 1. **Register** an account on the site.
 2. Get a free throwaway SMTP inbox at **[ethereal.email/create](https://ethereal.email/create)** (one click, no signup). It
@@ -229,10 +236,9 @@ live mail, and can't occupy more than its share of a worker.
 Requirements: [Bun](https://bun.sh) and Docker (for MongoDB and Redis).
 
 ```bash
-docker compose up -d mongo redis         # MongoDB (replica set) + Redis
 bun install && bun run web:install       # dependencies
 bun run web:build                        # build the web app (the API serves it)
-bun run dev                              # API + relay + reaper + 2 workers + fake SMTP server
+bun run dev                              # starts MongoDB + Redis (docker compose), then API + relay + reaper + 2 workers + fake SMTP server
 # open http://localhost:3100  ->  "Explore with a demo account"
 ```
 
@@ -248,11 +254,11 @@ one terminal portably (a plain `&` does not background processes on Windows).
 
 | Command | What it does |
 |---|---|
-| `docker compose up -d mongo redis` | Dev infrastructure (MongoDB replica set on `27017`, Redis on `6379`). |
+| `docker compose up -d mongo redis` | Dev infrastructure (MongoDB replica set on `27017`, Redis on `6379`). `bun run dev` runs this for you; run it by hand before `bun test` or when using `SKIP_INFRA=1`. If something else already owns port 27017 (for example a Windows MongoDB service, which is standalone and cannot run transactions), set `MONGO_PORT=27018` and point `MONGO_URL` at it in `.env`. |
 | `cp .env.example .env` | Local configuration (see [Configuration](#configuration)). |
 | `bun install` · `bun run web:install` | Server and web dependencies. |
 | `bun run web:build` | Build the web app into `web/dist` (the API serves it on the same port). |
-| `bun run dev` | API (`:3100`) + relay + reaper + workers + fake SMTP server, log lines prefixed by service, Ctrl+C stops all. `WORKER_PROCESSES=6 bun run dev` for more workers. |
+| `bun run dev` | Starts MongoDB + Redis (`docker compose up -d --wait`, a no-op if already up), then API (`:3100`) + relay + reaper + workers + fake SMTP server, log lines prefixed by service. Ctrl+C stops the app, not the databases (`docker compose stop mongo redis` does). `WORKER_PROCESSES=6 bun run dev` for more workers; `SKIP_INFRA=1 bun run dev` skips the Docker step. |
 | `WEB_DEV=1 bun run dev` | Same plus the Vite dev server with hot reload on `http://localhost:5173`. |
 | `bun run api` · `relay` · `reaper` · `worker` · `sink` | Run a single service. |
 | `WORKER_PROCESSES=4 bun run worker:cluster` | Several worker processes (default: half your cores). |
@@ -269,7 +275,9 @@ docker compose -p eqprod -f docker-compose.prod.yml --env-file .env.prod up -d -
 
 3-node MongoDB replica set (keyfile + auth), Redis master/replica with three Sentinels and a password, healthchecked
 stateless app containers with a 40 s drain period, memory limits. Put TLS termination in front of the API and set
-`PUBLIC_BASE_URL`. Deploy, upgrade, backup and incident procedures: [docs/RUNBOOK.md](docs/RUNBOOK.md).
+`PUBLIC_BASE_URL`. Set `DEMO_MODE=true` to run it as a public demo: the compose file includes a `sink` service (a fake SMTP
+server, internal only) that the demo account sends to, so visitors can try it without anything being delivered.
+Deploy, upgrade, backup and incident procedures: [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ### Tests and checks
 
@@ -335,6 +343,7 @@ Set in `.env` (dev) or `.env.prod` (production); validated at startup, and the p
 | Variable | Default | Meaning |
 |---|---|---|
 | `MONGO_URL` · `MONGO_DB` | `mongodb://localhost:27017/?directConnection=true` · `emailq` | MongoDB (a replica set is required for transactions). |
+| `MONGO_PORT` | `27017` | Host port the dev `docker-compose.yml` publishes MongoDB on (Compose reads it from `.env`); change it if 27017 is taken. |
 | `REDIS_URL` | `redis://localhost:6379` | Redis; or set `REDIS_SENTINELS` (`host:26379,...`), `REDIS_MASTER_NAME`, `REDIS_PASSWORD` for failover. |
 | `JWT_SECRET` | required, ≥ 32 chars | Signs access tokens (15 min). Rotating it signs everyone out. |
 | `ENCRYPTION_KEY` | required, 64 hex chars | AES-256-GCM key for stored SMTP passwords. Rotate with `ENCRYPTION_KEY_ID` + `ENCRYPTION_OLD_KEYS` + `bun run rotate-keys`. |
@@ -349,7 +358,8 @@ Set in `.env` (dev) or `.env.prod` (production); validated at startup, and the p
 | `EMAIL_RETENTION_DAYS` | `30` | Emails (and their templates and attachments) are deleted after this. |
 | `METRICS_TOKEN` | none | Protects `GET /metrics` (`Authorization: Bearer ...`), ≥ 16 chars. |
 | `ALLOWED_ORIGINS` | none | Extra browser origins for the cookie session (for example the Vite dev server). |
-| `DEMO_MODE` · `DEMO_SMTP_HOST` · `DEMO_SMTP_PORT` | `false` · `localhost` · `2525` | Demo account and campaign sender in the UI; where the demo SMTP account points. |
+| `DEMO_MODE` · `DEMO_SMTP_HOST` · `DEMO_SMTP_PORT` | `false` · `localhost` (`sink` in `docker-compose.prod.yml`) · `2525` | Demo account, campaign sender and a scrolling "this is just a demo" banner in the UI; where the demo SMTP account points (the bundled fake SMTP server). In demo mode that one host is exempt from the private-address guard; `ALLOW_PRIVATE_SMTP_HOSTS` stays `false`. |
+| `SKIP_INFRA` | off | `SKIP_INFRA=1 bun run dev` does not start MongoDB/Redis through Docker. |
 | `ACCESS_TOKEN_TTL_SEC` · `REFRESH_TOKEN_TTL_SEC` | 900 · 2,592,000 | Token lifetimes. |
 | `AUTH_RATE_LIMIT_SCALE` | `1` | Multiplies per-IP limits on credential endpoints; tests raise it, leave at 1. |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `silent`. |

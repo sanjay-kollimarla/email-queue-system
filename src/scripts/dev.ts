@@ -6,7 +6,8 @@
  *   WORKER_PROCESSES=6 bun run dev
  *
  * (`cmd &` does not background processes on Windows, and PowerShell 5 has no `&` operator for it,
- * so this launcher does it portably.) Requires `docker compose up -d mongo redis`.
+ * so this launcher does it portably.) It first runs `docker compose up -d --wait mongo redis` so the database and
+ * queue are up (a no-op when they already are); `SKIP_INFRA=1 bun run dev` skips that if you run them yourself.
  */
 const workers = Number(process.env.WORKER_PROCESSES ?? 2);
 
@@ -21,6 +22,15 @@ const services: Array<{ name: string; script: string; cwd?: string; cmd?: string
   ...(withWebDev ? [{ name: "web", script: "vite", cwd: "web", cmd: [process.execPath, "run", "dev"] }] : []),
   ...Array.from({ length: workers }, (_, i) => ({ name: `worker${i + 1}`, script: "src/workers/send-worker.ts" })),
 ];
+
+if (process.env.SKIP_INFRA !== "1") {
+  console.log("starting mongo + redis (docker compose)...");
+  const infra = Bun.spawnSync(["docker", "compose", "up", "-d", "--wait", "mongo", "redis"], { stdout: "inherit", stderr: "inherit" });
+  if (infra.exitCode !== 0) {
+    console.error("could not start mongo + redis: is Docker running? (SKIP_INFRA=1 skips this step)");
+    process.exit(1);
+  }
+}
 
 const COLORS = [36, 32, 33, 35, 34, 96, 92, 93, 95, 94];
 const procs: Array<ReturnType<typeof Bun.spawn>> = [];

@@ -7,6 +7,7 @@ import { useTheme } from "../shared/theme/theme";
 import { Button } from "../shared/ui/button";
 import { Dialog } from "../shared/ui/dialog";
 import { Brand } from "./brand";
+import { CreditsBar, DemoBanner } from "./site-bar";
 
 const NAV = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
@@ -96,23 +97,27 @@ export function AppLayout() {
         <AccountFooter />
       </aside>
 
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-surface/90 px-4 py-3 backdrop-blur lg:hidden">
-        <Brand />
-        <Button variant="ghost" size="sm" onClick={() => setMenuOpen(true)} aria-label="Open menu" icon={<Menu className="size-5" />} />
-      </header>
-      <Dialog open={menuOpen} onClose={() => setMenuOpen(false)} title="Menu" variant="drawer" className="w-[min(100vw,18rem)]">
-        <div className="flex h-full flex-col gap-6">
-          <NavList onNavigate={() => setMenuOpen(false)} />
-          <AccountFooter />
-        </div>
-      </Dialog>
+      <div className="min-w-0">
+        <CreditsBar />
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-surface/90 px-4 py-3 backdrop-blur lg:hidden">
+          <Brand />
+          <Button variant="ghost" size="sm" onClick={() => setMenuOpen(true)} aria-label="Open menu" icon={<Menu className="size-5" />} />
+        </header>
+        <DemoBanner />
+        <Dialog open={menuOpen} onClose={() => setMenuOpen(false)} title="Menu" variant="drawer" className="w-[min(100vw,18rem)]">
+          <div className="flex h-full flex-col gap-6">
+            <NavList onNavigate={() => setMenuOpen(false)} />
+            <AccountFooter />
+          </div>
+        </Dialog>
 
-      {/* key on pathname restarts the entrance animation per page, and moves focus target semantics to <main> */}
-      <main id="main" tabIndex={-1} className="min-w-0 px-4 py-6 outline-none sm:px-8 sm:py-8">
-        <div key={location.pathname} className="mx-auto max-w-6xl animate-[fade-in_.25s_ease-out]">
-          <Outlet />
-        </div>
-      </main>
+        {/* key on pathname restarts the entrance animation per page, and moves focus target semantics to <main> */}
+        <main id="main" tabIndex={-1} className="min-w-0 px-4 py-6 outline-none sm:px-8 sm:py-8">
+          <div key={location.pathname} className="mx-auto max-w-6xl animate-[fade-in_.25s_ease-out]">
+            <Outlet />
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

@@ -150,6 +150,11 @@
     box-shadow: 0 0 0 8px rgb(70 211 154 / 0%);
   }
 }
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
 @keyframes slide-in {
   from {
     opacity: 0;

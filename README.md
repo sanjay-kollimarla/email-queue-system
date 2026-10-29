@@ -20,7 +20,7 @@ Built by **Sanjay Kollimarla** · [LinkedIn](https://linkedin.com/in/kollimarla-
 
 ## Live demo
 
-**https://sanjay-kollimarla-email-queue.tailc8948a.ts.net**: the production stack (3-node MongoDB replica set, Redis with Sentinel, API, relay,
+**https://sanjay-kollimarla.tailc8948a.ts.net**: the production stack (3-node MongoDB replica set, Redis with Sentinel, API, relay,
 workers, reaper) running on my own machine behind a Tailscale Funnel, so it can be offline when the machine is.
 
 The live site runs in **demo mode**: a scrolling banner says so. Use **"Explore with a demo account"** on the sign-in page
